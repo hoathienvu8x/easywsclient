@@ -28,6 +28,9 @@ implementations that may better suit your needs.
 News
 ====
 
+*2020-01-06*
+Add code to support url `wss` i'm not sure this will work for every host ssl
+
 *2014-12-06*
 Binary frames now supported. Closes issue #38.  Automated integration testing
 is now supported by running `make test`. The test suite expects GoogleTest to

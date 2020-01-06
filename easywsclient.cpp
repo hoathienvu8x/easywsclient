@@ -7,8 +7,8 @@
         #define WIN32_LEAN_AND_MEAN
     #endif
     #include <fcntl.h>
-    #include <WinSock2.h>
-    #include <WS2tcpip.h>
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
     #pragma comment( lib, "ws2_32" )
     #include <stdio.h>
     #include <stdlib.h>
@@ -26,7 +26,8 @@
     #ifndef snprintf
         #define snprintf _snprintf_s
     #endif
-    #if _MSC_VER >=1600
+    #include <stdint.h>
+    /*#if _MSC_VER >=1600
         // vs2010 or later
         #include <stdint.h>
     #else
@@ -36,7 +37,7 @@
         typedef unsigned __int32 uint32_t;
         typedef __int64 int64_t;
         typedef unsigned __int64 uint64_t;
-    #endif
+    #endif*/
     #define socketerrno WSAGetLastError()
     #define SOCKET_EAGAIN_EINPROGRESS WSAEINPROGRESS
     #define SOCKET_EWOULDBLOCK WSAEWOULDBLOCK
@@ -453,10 +454,14 @@ class _RealWebSocket : public easywsclient::WebSocket
 };
 
 
-easywsclient::WebSocket::pointer from_url(const std::string& url, bool useMask, const std::string& origin) {
+easywsclient::WebSocket::pointer from_url(const std::string& ourl, bool useMask, const std::string& origin) {
     char host[512];
     int port;
     char path[512];
+    std::string url = ourl;
+    if (url.substr(0,3) == "wss") {
+        url = "ws"+url.substr(3);
+    }
     if (url.size() >= 512) {
       fprintf(stderr, "ERROR: url size limit exceeded: %s\n", url.c_str());
       return NULL;

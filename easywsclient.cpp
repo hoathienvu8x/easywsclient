@@ -172,8 +172,13 @@ class _RealWebSocket : public easywsclient::WebSocket
     socket_t sockfd;
     readyStateValues readyState;
     bool useMask;
+    bool isRxBad;
 
-    _RealWebSocket(socket_t sockfd, bool useMask) : sockfd(sockfd), readyState(OPEN), useMask(useMask) {
+    _RealWebSocket(socket_t sockfd, bool useMask)
+            : sockfd(sockfd)
+            , readyState(OPEN)
+            , useMask(useMask)
+            , isRxBad(false) {
     }
 
     readyStateValues getReadyState() const {
@@ -264,6 +269,9 @@ class _RealWebSocket : public easywsclient::WebSocket
 
     virtual void _dispatchBinary(BytesCallback_Imp & callable) {
         // TODO: consider acquiring a lock on rxbuf...
+        if (isRxBad) {
+            return;
+        }
         while (true) {
             wsheader_type ws;
             if (rxbuf.size() < 2) { return; /* Need at least 2 */ }
@@ -296,6 +304,20 @@ class _RealWebSocket : public easywsclient::WebSocket
                 ws.N |= ((uint64_t) data[8]) << 8;
                 ws.N |= ((uint64_t) data[9]) << 0;
                 i = 10;
+                if (ws.N & 0x8000000000000000ull) {
+                    // https://tools.ietf.org/html/rfc6455 writes the "the most
+                    // significant bit MUST be 0."
+                    //
+                    // We can't drop the frame, because (1) we don't we don't
+                    // know how much data to skip over to find the next header,
+                    // and (2) this would be an impractically long length, even
+                    // if it were valid. So just close() and return immediately
+                    // for now.
+                    isRxBad = true;
+                    fprintf(stderr, "ERROR: Frame has invalid frame length. Closing.\n");
+                    close();
+                    return;
+                }
             }
             if (ws.mask) {
                 ws.masking_key[0] = ((uint8_t) data[i+0]) << 0;
@@ -309,6 +331,9 @@ class _RealWebSocket : public easywsclient::WebSocket
                 ws.masking_key[2] = 0;
                 ws.masking_key[3] = 0;
             }
+
+            // Note: The checks above should hopefully ensure this addition
+            //       cannot overflow:
             if (rxbuf.size() < ws.header_size+ws.N) { return; /* Need: ws.header_size+ws.N - rxbuf.size() */ }
 
             // We got a whole message, now do something with it:
@@ -429,10 +454,10 @@ class _RealWebSocket : public easywsclient::WebSocket
 
 
 easywsclient::WebSocket::pointer from_url(const std::string& url, bool useMask, const std::string& origin) {
-    char host[128];
+    char host[512];
     int port;
-    char path[128];
-    if (url.size() >= 128) {
+    char path[512];
+    if (url.size() >= 512) {
       fprintf(stderr, "ERROR: url size limit exceeded: %s\n", url.c_str());
       return NULL;
     }
@@ -465,31 +490,31 @@ easywsclient::WebSocket::pointer from_url(const std::string& url, bool useMask, 
     }
     {
         // XXX: this should be done non-blocking,
-        char line[256];
+        char line[1024];
         int status;
         int i;
-        snprintf(line, 256, "GET /%s HTTP/1.1\r\n", path); ::send(sockfd, line, strlen(line), 0);
+        snprintf(line, 1024, "GET /%s HTTP/1.1\r\n", path); ::send(sockfd, line, strlen(line), 0);
         if (port == 80) {
-            snprintf(line, 256, "Host: %s\r\n", host); ::send(sockfd, line, strlen(line), 0);
+            snprintf(line, 1024, "Host: %s\r\n", host); ::send(sockfd, line, strlen(line), 0);
         }
         else {
-            snprintf(line, 256, "Host: %s:%d\r\n", host, port); ::send(sockfd, line, strlen(line), 0);
+            snprintf(line, 1024, "Host: %s:%d\r\n", host, port); ::send(sockfd, line, strlen(line), 0);
         }
-        snprintf(line, 256, "Upgrade: websocket\r\n"); ::send(sockfd, line, strlen(line), 0);
-        snprintf(line, 256, "Connection: Upgrade\r\n"); ::send(sockfd, line, strlen(line), 0);
+        snprintf(line, 1024, "Upgrade: websocket\r\n"); ::send(sockfd, line, strlen(line), 0);
+        snprintf(line, 1024, "Connection: Upgrade\r\n"); ::send(sockfd, line, strlen(line), 0);
         if (!origin.empty()) {
-            snprintf(line, 256, "Origin: %s\r\n", origin.c_str()); ::send(sockfd, line, strlen(line), 0);
+            snprintf(line, 1024, "Origin: %s\r\n", origin.c_str()); ::send(sockfd, line, strlen(line), 0);
         }
-        snprintf(line, 256, "Sec-WebSocket-Key: x3JJHMbDL1EzLkh9GBhXDw==\r\n"); ::send(sockfd, line, strlen(line), 0);
-        snprintf(line, 256, "Sec-WebSocket-Version: 13\r\n"); ::send(sockfd, line, strlen(line), 0);
-        snprintf(line, 256, "\r\n"); ::send(sockfd, line, strlen(line), 0);
-        for (i = 0; i < 2 || (i < 255 && line[i-2] != '\r' && line[i-1] != '\n'); ++i) { if (recv(sockfd, line+i, 1, 0) == 0) { return NULL; } }
+        snprintf(line, 1024, "Sec-WebSocket-Key: x3JJHMbDL1EzLkh9GBhXDw==\r\n"); ::send(sockfd, line, strlen(line), 0);
+        snprintf(line, 1024, "Sec-WebSocket-Version: 13\r\n"); ::send(sockfd, line, strlen(line), 0);
+        snprintf(line, 1024, "\r\n"); ::send(sockfd, line, strlen(line), 0);
+        for (i = 0; i < 2 || (i < 1023 && line[i-2] != '\r' && line[i-1] != '\n'); ++i) { if (recv(sockfd, line+i, 1, 0) == 0) { return NULL; } }
         line[i] = 0;
-        if (i == 255) { fprintf(stderr, "ERROR: Got invalid status line connecting to: %s\n", url.c_str()); return NULL; }
+        if (i == 1023) { fprintf(stderr, "ERROR: Got invalid status line connecting to: %s\n", url.c_str()); return NULL; }
         if (sscanf(line, "HTTP/1.1 %d", &status) != 1 || status != 101) { fprintf(stderr, "ERROR: Got bad status connecting to %s: %s", url.c_str(), line); return NULL; }
         // TODO: verify response headers,
         while (true) {
-            for (i = 0; i < 2 || (i < 255 && line[i-2] != '\r' && line[i-1] != '\n'); ++i) { if (recv(sockfd, line+i, 1, 0) == 0) { return NULL; } }
+            for (i = 0; i < 2 || (i < 1023 && line[i-2] != '\r' && line[i-1] != '\n'); ++i) { if (recv(sockfd, line+i, 1, 0) == 0) { return NULL; } }
             if (line[0] == '\r' && line[1] == '\n') { break; }
         }
     }

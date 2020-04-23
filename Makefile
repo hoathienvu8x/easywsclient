@@ -3,13 +3,13 @@ LDLIBS = -lstdc++
 
 .PHONY: all clean
 
-all: example-client
+all: example
 clean:
 	@echo "Cleanning..."
-	rm -rf example-client *.o
+	rm -rf example *.o
 
-example-client:example-client.o easywsclient.o
-example-client.o: example-client.cpp easywsclient.h
-easywsclient.o: easywsclient.cpp easywsclient.h
+example:example.o websocket.o
+example.o: example.cpp websocket.h
+websocket.o: websocket.cpp websocket.h
 
 

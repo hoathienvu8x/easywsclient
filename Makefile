@@ -11,5 +11,3 @@ clean:
 example-client:example-client.o easywsclient.o
 example-client.o: example-client.cpp easywsclient.h
 easywsclient.o: easywsclient.cpp easywsclient.h
-
-
